@@ -1,6 +1,5 @@
 import os
 import time
-import cPickle
 import datetime
 import logging
 import flask
@@ -9,15 +8,14 @@ import optparse
 import tornado.wsgi
 import tornado.httpserver
 import numpy as np
-import pandas as pd
 from PIL import Image
 import cStringIO as StringIO
 import urllib
 import exifutil
 
 import caffe
+import classifier
 
-# SemanticMD libraries
 import settings
 
 UPLOAD_FOLDER = '/tmp/caffe_demos_uploads'
@@ -33,7 +31,6 @@ def _protomean_file2numpy(protomean_fname):
     blob.ParseFromString(data)
     arr = np.array(caffe.io.blobproto_to_array(blob))
     out = arr[0]
-    out_swapped = np.swapaxes(out, 0, 2)
 
     return out
 
@@ -139,7 +136,8 @@ class ImagenetClassifier(object):
     def classify_image(self, image):
         try:
             starttime = time.time()
-            scores = self.net.predict([image], oversample=True).flatten()
+            # scores = self.net.predict([image], oversample=False).flatten()
+            scores = self.net.classify_one(image)
             endtime = time.time()
 
             with open(settings.LABELS_FILE, 'r') as f:

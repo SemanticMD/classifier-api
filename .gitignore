@@ -58,3 +58,5 @@ target/
 
 # local caffe installation
 caffe/
+
+image.py
