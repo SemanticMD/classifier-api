@@ -1,5 +1,5 @@
 # classifier-api
-Self-contained web server for SemanticMD's classifiers
+Self-contained web server for SemanticMD's classifiers. Based on https://github.com/BVLC/caffe/tree/master/examples/web_demo.
 
 ## Requirements
 

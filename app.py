@@ -17,11 +17,25 @@ import exifutil
 
 import caffe
 
+# SemanticMD libraries
+import settings
+
 UPLOAD_FOLDER = '/tmp/caffe_demos_uploads'
 ALLOWED_IMAGE_EXTENSIONS = set(['png', 'bmp', 'jpg', 'jpe', 'jpeg', 'gif'])
 
 # Obtain the flask app object
 app = flask.Flask(__name__)
+
+# Private functions
+def _protomean_file2numpy(protomean_fname):
+    blob = caffe.proto.caffe_pb2.BlobProto()
+    data = open(protomean_fname, 'rb').read()
+    blob.ParseFromString(data)
+    arr = np.array(caffe.io.blobproto_to_array(blob))
+    out = arr[0]
+    out_swapped = np.swapaxes(out, 0, 2)
+
+    return out
 
 
 @app.route('/')
@@ -58,7 +72,7 @@ def classify_upload():
         # We will save the file to disk for possible data collection.
         imagefile = flask.request.files['imagefile']
         filename_ = str(datetime.datetime.now()).replace(' ', '_') + \
-            werkzeug.secure_filename(imagefile.filename)
+                    werkzeug.secure_filename(imagefile.filename)
         filename = os.path.join(UPLOAD_FOLDER, filename_)
         imagefile.save(filename)
         logging.info('Saving to %s.', filename)
@@ -97,11 +111,9 @@ def allowed_file(filename):
 
 class ImagenetClassifier(object):
     default_args = {
-        'model_def_file': '/home/sb/git_projects/caffe/models/bvlc_reference_caffenet/deploy.prototxt',
-        'pretrained_model_file': '/home/sb/git_projects/caffe/models/bvlc_reference_caffenet/bvlc_reference_caffenet.caffemodel',
-        'mean_file': '/home/sb/git_projects/caffe/models/ilsvrc_2012_mean.npy',
-        'class_labels_file': '/home/sb/git_projects/caffe/data/ilsvrc12/synset_words.txt',
-        'bet_file': '/home/sb/git_projects/caffe/data/ilsvrc12/imagenet.bet.pickle'
+        'model_def_file': settings.MODEL_DEF_FILE,
+        'pretrained_model_file': settings.MODEL_FILE,
+        'mean_file': settings.MEAN_FILE
     }
     for key, val in default_args.iteritems():
         if not os.path.exists(val):
@@ -111,33 +123,18 @@ class ImagenetClassifier(object):
     default_args['raw_scale'] = 255.
 
     def __init__(self, model_def_file, pretrained_model_file, mean_file,
-                 raw_scale, class_labels_file, bet_file, image_dim, gpu_mode):
+                 raw_scale, image_dim, gpu_mode):
         logging.info('Loading net and associated files...')
         if gpu_mode:
             caffe.set_mode_gpu()
         else:
             caffe.set_mode_cpu()
+        mean_image = _protomean_file2numpy(mean_file)
         self.net = caffe.Classifier(
             model_def_file, pretrained_model_file,
             image_dims=(image_dim, image_dim), raw_scale=raw_scale,
-            mean=np.load(mean_file).mean(1).mean(1), channel_swap=(2, 1, 0)
+            channel_swap=(2, 1, 0)
         )
-
-        with open(class_labels_file) as f:
-            labels_df = pd.DataFrame([
-                {
-                    'synset_id': l.strip().split(' ')[0],
-                    'name': ' '.join(l.strip().split(' ')[1:]).split(',')[0]
-                }
-                for l in f.readlines()
-            ])
-        self.labels = labels_df.sort('synset_id')['name'].values
-
-        self.bet = cPickle.load(open(bet_file))
-        # A bias to prefer children nodes in single-chain paths
-        # I am setting the value to 0.1 as a quick, simple model.
-        # We could use better psychological models here...
-        self.bet['infogain'] -= np.array(self.bet['preferences']) * 0.1
 
     def classify_image(self, image):
         try:
@@ -145,29 +142,24 @@ class ImagenetClassifier(object):
             scores = self.net.predict([image], oversample=True).flatten()
             endtime = time.time()
 
+            with open(settings.LABELS_FILE, 'r') as f:
+                labels = f.read().split("\n")
+                filtered_labels = [i for i in labels if i != ""]
+
+            # Top 5 Predictions
             indices = (-scores).argsort()[:5]
-            predictions = self.labels[indices]
+            predictions = [filtered_labels[i] for i in indices]
 
             # In addition to the prediction text, we will also produce
             # the length for the progress bar visualization.
             meta = [
                 (p, '%.5f' % scores[i])
                 for i, p in zip(indices, predictions)
-            ]
+                ]
             logging.info('result: %s', str(meta))
 
-            # Compute expected information gain
-            expected_infogain = np.dot(
-                self.bet['probmat'], scores[self.bet['idmapping']])
-            expected_infogain *= self.bet['infogain']
-
             # sort the scores
-            infogain_sort = expected_infogain.argsort()[::-1]
-            bet_result = [(self.bet['words'][v], '%.5f' % expected_infogain[v])
-                          for v in infogain_sort[:5]]
-            logging.info('bet result: %s', str(bet_result))
-
-            return (True, meta, bet_result, '%.3f' % (endtime - starttime))
+            return True, meta, '%.3f' % (endtime - starttime)
 
         except Exception as err:
             logging.info('Classification error: %s', err)
